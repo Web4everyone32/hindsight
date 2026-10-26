@@ -15,7 +15,7 @@ import json
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from . import lifecycle, providers, service
 
@@ -73,7 +73,13 @@ class ControlCenterHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _segments(path: str) -> list[str]:
-        return [s for s in urlparse(path).path.split("/") if s]
+        # The UI uses encodeURIComponent for profile names; dispatch must use
+        # the decoded name, rather than looking up a second, percent-encoded profile.
+        segments = [unquote(s) for s in urlparse(path).path.split("/") if s]
+        # Decoding must not turn a single route segment into a filesystem path.
+        if any(s in (".", "..") or "/" in s or "\\" in s for s in segments):
+            return ["invalid"]
+        return segments
 
     # ----- dispatch ------------------------------------------------------
     def do_GET(self) -> None:
