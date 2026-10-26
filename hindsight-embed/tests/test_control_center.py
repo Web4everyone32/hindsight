@@ -288,6 +288,31 @@ def _auth(token="test-token-secret"):
 
 
 class TestServer:
+    @pytest.mark.parametrize("failed_component", ["daemon", "ui"])
+    def test_delete_preserves_profile_when_shutdown_fails(self, server, monkeypatch, failed_component):
+        from hindsight_embed import daemon_client
+        from hindsight_embed.profile_manager import ProfileManager
+
+        manager = ProfileManager()
+        manager.create_profile("keep-me", {"HINDSIGHT_API_LLM_PROVIDER": "groq"})
+        manager.set_active_profile("keep-me")
+        paths = manager.resolve_profile_paths("keep-me")
+        paths.log.write_text("keep this log\n", encoding="utf-8")
+        original_config = paths.config.read_text(encoding="utf-8")
+        monkeypatch.setattr(daemon_client, "is_daemon_running", lambda profile=None: True)
+        monkeypatch.setattr(daemon_client, "is_ui_running", lambda profile=None: True)
+        monkeypatch.setattr(daemon_client, "stop_daemon", lambda profile=None: failed_component != "daemon")
+        monkeypatch.setattr(daemon_client, "stop_ui", lambda profile=None: failed_component != "ui")
+
+        response = httpx.post(f"{server}/api/profiles/keep-me/delete", headers=_auth())
+        assert response.status_code == 200
+        assert response.json()["ok"] is False
+        assert failed_component in response.json()["message"].lower()
+        assert paths.config.read_text(encoding="utf-8") == original_config
+        assert paths.log.read_text(encoding="utf-8") == "keep this log\n"
+        assert manager.get_active_profile() == "keep-me"
+        assert "keep-me" in manager._load_metadata().profiles
+
     def test_health_needs_no_token(self, server):
         r = httpx.get(f"{server}/api/health")
         assert r.status_code == 200 and r.json()["status"] == "ok"

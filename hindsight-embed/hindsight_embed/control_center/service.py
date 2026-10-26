@@ -506,11 +506,14 @@ def delete_profile(name: str) -> ProfileDeleteResult:
     name = normalize_profile(name)
     if not name:
         return ProfileDeleteResult(ok=False, message="The default profile cannot be deleted.")
-    # Free the port / processes before removing the config it points at.
+    # A failed stop must leave the profile registered and its config/logs
+    # available so the user can diagnose the failure and retry deletion.
     if daemon_client.is_daemon_running(name):
-        daemon_client.stop_daemon(name)
+        if not daemon_client.stop_daemon(name):
+            return ProfileDeleteResult(ok=False, message="Failed to stop daemon; profile was not deleted.")
     if daemon_client.is_ui_running(name):
-        daemon_client.stop_ui(name)
+        if not daemon_client.stop_ui(name):
+            return ProfileDeleteResult(ok=False, message="Failed to stop UI; profile was not deleted.")
     try:
         ProfileManager().delete_profile(name)
     except ValueError as exc:
