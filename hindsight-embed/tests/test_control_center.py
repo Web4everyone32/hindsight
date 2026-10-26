@@ -288,6 +288,32 @@ def _auth(token="test-token-secret"):
 
 
 class TestServer:
+    def test_unicode_profile_roundtrip_over_http(self, server):
+        from urllib.parse import quote
+
+        from hindsight_embed.profile_manager import ProfileManager
+
+        name = "工作"
+        ProfileManager().create_profile(name, {"HINDSIGHT_API_LLM_PROVIDER": "groq"})
+        url = f"{server}/api/profiles/{quote(name, safe='')}/config"
+        response = httpx.get(url, headers=_auth())
+        assert response.status_code == 200
+        assert response.json()["name"] == name
+        assert response.json()["provider"] == "groq"
+
+        saved = httpx.post(url, headers=_auth(), json={"provider": "openai", "model": "test-model"})
+        assert saved.status_code == 200
+        assert service.get_profile_config(name).model == "test-model"
+
+        deleted = httpx.post(f"{server}/api/profiles/{quote(name, safe='')}/delete", headers=_auth())
+        assert deleted.status_code == 200 and deleted.json()["ok"]
+        assert not ProfileManager().profile_exists(name)
+
+    @pytest.mark.parametrize("name", ["%2E%2E", "a%2Fb", "a%5Cb", "%252E%252E"])
+    def test_encoded_profile_paths_do_not_escape_route_segments(self, server, name):
+        response = httpx.post(f"{server}/api/profiles/{name}/config", headers=_auth(), json={"provider": "openai"})
+        assert response.status_code in (400, 404)
+
     def test_health_needs_no_token(self, server):
         r = httpx.get(f"{server}/api/health")
         assert r.status_code == 200 and r.json()["status"] == "ok"
