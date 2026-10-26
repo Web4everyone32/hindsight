@@ -355,8 +355,8 @@ def start_daemon(name: str) -> DaemonActionResult:
 def stop_daemon(name: str) -> DaemonActionResult:
     """Stop the profile's daemon."""
     name = normalize_profile(name)
-    if not daemon_client.is_daemon_running(name):
-        return DaemonActionResult(ok=True, running=False, url=None, message="Daemon was not running.")
+    # A failed health probe does not mean the process exited. The manager's
+    # stop path checks port occupancy and safely handles an absent daemon.
     ok = daemon_client.stop_daemon(name)
     return DaemonActionResult(
         ok=ok,
@@ -369,9 +369,14 @@ def stop_daemon(name: str) -> DaemonActionResult:
 def restart_daemon(name: str) -> DaemonActionResult:
     """Restart the profile's daemon to pick up new config."""
     name = normalize_profile(name)
-    if daemon_client.is_daemon_running(name):
-        if not daemon_client.stop_daemon(name):
-            return DaemonActionResult(ok=False, running=True, url=None, message="Failed to stop daemon for restart.")
+    # Always stop first, including when the existing daemon is unresponsive.
+    if not daemon_client.stop_daemon(name):
+        return DaemonActionResult(
+            ok=False,
+            running=daemon_client.is_daemon_running(name),
+            url=None,
+            message="Failed to stop daemon for restart.",
+        )
     return start_daemon(name)
 
 

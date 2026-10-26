@@ -288,6 +288,41 @@ def _auth(token="test-token-secret"):
 
 
 class TestServer:
+    @pytest.mark.parametrize("action", ["stop", "restart"])
+    def test_unhealthy_daemon_still_receives_stop(self, server, monkeypatch, action):
+        from unittest.mock import Mock
+
+        from hindsight_embed import daemon_client
+
+        monkeypatch.setattr(daemon_client, "is_daemon_running", lambda profile=None: False)
+        stop = Mock(return_value=True)
+        start = Mock(return_value=True)
+        monkeypatch.setattr(daemon_client, "stop_daemon", stop)
+        monkeypatch.setattr(daemon_client, "ensure_daemon_running", start)
+
+        response = httpx.post(f"{server}/api/profiles/default/daemon/{action}", headers=_auth())
+        assert response.status_code == 200
+        assert response.json()["ok"]
+        stop.assert_called_once_with("")
+        assert start.call_count == (1 if action == "restart" else 0)
+
+    def test_restart_does_not_start_after_failed_unhealthy_stop(self, server, monkeypatch):
+        from unittest.mock import Mock
+
+        from hindsight_embed import daemon_client
+
+        monkeypatch.setattr(daemon_client, "is_daemon_running", lambda profile=None: False)
+        stop = Mock(return_value=False)
+        start = Mock(return_value=True)
+        monkeypatch.setattr(daemon_client, "stop_daemon", stop)
+        monkeypatch.setattr(daemon_client, "ensure_daemon_running", start)
+
+        response = httpx.post(f"{server}/api/profiles/default/daemon/restart", headers=_auth())
+        assert response.status_code == 200
+        assert response.json()["ok"] is False
+        stop.assert_called_once_with("")
+        start.assert_not_called()
+
     def test_health_needs_no_token(self, server):
         r = httpx.get(f"{server}/api/health")
         assert r.status_code == 200 and r.json()["status"] == "ok"
